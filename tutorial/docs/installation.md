@@ -1,4 +1,18 @@
-# Running DeepSeek Models on Alliance Canada's 
+# Running DeepSeek Models on Alliance Canada's Narval Cluster
+- [Running DeepSeek Models on Alliance Canada's Narval Cluster](#running-deepseek-models-on-alliance-canadas-narval-cluster)
+  - [Phase 1. Initial Setup and Environment Preparation](#phase-1-initial-setup-and-environment-preparation)
+    - [Step 1: Connect and Configure Environment](#step-1-connect-and-configure-environment)
+    - [Step 2: Set Up Directory Structure](#step-2-set-up-directory-structure)
+    - [Step 3: Chose, and download a model:](#step-3-chose-and-download-a-model)
+    - [Step 4: Create Python Virtual Environment](#step-4-create-python-virtual-environment)
+  - [Phase 2: Creating SLURM Job Scripts](#phase-2-creating-slurm-job-scripts)
+    - [Step 5: Basic Inference Job Script](#step-5-basic-inference-job-script)
+    - [Step 6: Create your inference script:](#step-6-create-your-inference-script)
+    - [Step 7: API Server Job Script (Optional)](#step-7-api-server-job-script-optional)
+  - [Phase 3: Job Submission \& Management](#phase-3-job-submission--management)
+    - [Step 8: Submit your job](#step-8-submit-your-job)
+  - [Troubleshooting \& Optimization](#troubleshooting--optimization)
+    - [Common Issues and Solutions](#common-issues-and-solutions)
 
 ## Phase 1. Initial Setup and Environment Preparation
 ### Step 1: Connect and Configure Environment
