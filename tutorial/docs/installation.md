@@ -1,16 +1,4 @@
-# Running DeepSeek Models on Alliance Canada's Narval Cluster
-## Understanding DeepSeek Models and Narval
-### Deep Seek Model Family:
-- DeepSeek-R1 series: Reasoning-focused models (1.5B, 7B, 14B, 32B, 67B parameters)
-- DeepSeek-V3: Latest generation multimodal models
-- DeepSeek-Coder: Code-specialized models
-- DeepSeek-Math: Mathematics-focused models
-  
-### Narval Cluster Characteristics
-- GPU Type: NVIDIA A100-40GB (RGU value:4.0)
-- Internet Access: Login nodes only - compute nodes are offline
-- Max Job Duration: 7 days (168 hours)
-  
+# Running DeepSeek Models on Alliance Canada's 
 
 ## Phase 1. Initial Setup and Environment Preparation
 ### Step 1: Connect and Configure Environment
