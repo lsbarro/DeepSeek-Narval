@@ -2,7 +2,7 @@
 
 ## Phase 1. Initial Setup and Environment Preparation
 ### Step 1: Connect and Configure Environment
-On Narval:
+*On Narval:*
 ```bash
 # Clear any existing modules, and load standard environment
 module purge
@@ -131,7 +131,7 @@ echo "Job completed at $(date)"
 #in your jobs directory (/project/def-yourgroup/deepseek-workspace/jobs)
 nano inference_script.py
 ```
-*Fill contents of `inference_script.py`:*
+*Write contents of `inference_script.py`:*
 ```python
 #!/usr/bin/env python3
 """
@@ -204,7 +204,7 @@ if __name__ == "__main__":
 ```bash
 nano deepseek_server.sh
 ```
-*Fill contents of `deepseek_server.sh`, replacing necessary values as before*
+*Write contents of `deepseek_server.sh`, replacing necessary values as before*
 ```bash
 #!/bin/bash
 #SBATCH --job-name=deepseek-server
@@ -262,8 +262,7 @@ echo "Server stopped at $(date)"
 # Make your job scripts executable
 chmod +x deepseek_inference.sh deepseek_server.sh
 
-# Submit your inference job
-cd /project/def-yourgroup/deepseek-workspace/jobs
+# In your jobs dir (/project/def-yourgroup/deepseek-workspace/jobs) submit your inference job
 sbatch deepseek_inference.sh
 
 # Check job status
@@ -317,62 +316,6 @@ squeue -u $USER
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-### Step 3: Create Master Virtual Environment
-```bash
-# Load required modules in sequence
-module load python/3.11 gcc/12.3 opencv/4.11
-
-# Create virtual environment
-virtualenv --no-download ~/deepseek_master_env
-source ~/deepseek_master_env/bin/activate
-
-# Install packages from Alliance wheelhouse
-pip install --no-index --upgrade pip
-pip install --no-index torch torchvision torchaudio
-pip install --no-index transformers safetensors tokenizers
-pip install --no-index vllm accelerate
-pip install --no-index datasets trl  # For training/fine-tuning
-pip install --no-index fastapi uvicorn  # For API servers
-pip install --no-index jupyter notebook  # For interactive development
-
-deactivate
-```
-## Phase 2: Get Model
-### Step 4: Download DeepSeek Model
-- Chose which model:
-  - Reasoning: DeepSeek-R1-Distill-Qwen-14B (good balance of performance/ resources)
-  - Coding: DeepSeek-COder-V2-Instruct
-  - Mathematics: DeepSeek-Math-7B-Instruct
-```bash
-# In the models directory, load Git LFS to download your model
-module load git-lfs/3.4.0
-git lfs install
-
-# Download model (example with 14B)
-git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
-cd DeepSeek-R1-Distill-Qwen-14B
-git lfs pull
-```
-
-*At this point, check the size of the downloaded ".safetensors" files, they should be GBs, not the bytes.*
-
-Alternate models
-| Model    | Repository      |
-| ------------- | ------------- |
-| 1.5B Param, for smaller resource requirements (1 GPU) | git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B |
-| Instruct, for coding tasks | git clone https://huggingface.co/deepseek-ai/DeepSeek-Coder-V2-Instruct |
-|32B model, for larger capabilities (4 GPUs) | git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
 
 
 
