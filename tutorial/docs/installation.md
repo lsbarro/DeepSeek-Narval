@@ -25,8 +25,8 @@ module load StdEnv/2023
 ### Step 2: Set Up Directory Structure
 ```bash
 # In your project directory, create a workspace
-mkdir deepseek
-cd deepseek
+mkdir deepseek-workspace
+cd deepseek-workspace
 
 # Create a subdirectory for organization
 mkdir logs jobs
@@ -56,7 +56,7 @@ git lfs pull
 ### Step 4: Create Python Virtual Environment
 *Setup a persistant virtual environment, with all the required packages*
 ```bash
-# Back in your workspace (/project/def-yourgroup/deepseek)
+# Back in your workspace (/project/def-yourgroup/deepseek-workspace)
 
 # Create a virtual env
 virtualenv --no-download deepseek_env
@@ -66,7 +66,7 @@ source deepseek_env/bin/activate
 pip install --no-index --upgrade pip
 pip install --no-index torch torchvision torchaudio
 pip install --no-index transformers safetensors tokenizers
-pip install --no-index vllm accelerate
+pip install --no-index vllm>=0.10.0 accelerate
 
 # Optional: Install additional packages for specific use cases
 pip install --no-index fastapi uvicorn  # For API servers
@@ -113,11 +113,15 @@ source $SLURM_TMPDIR/deepseek_env/bin/activate
 
 # Install required packages in the job environment
 pip install --no-index --upgrade pip
-pip install --no-index torch vllm transformers safetensors
+pip install --no-index torch vllm>=0.10.0 transformers safetensors
 
-echo "Copying model to local storage"
-# Copy the model to the tmpdir
-cp -r /project/def-yourgroup/deepseek-workspace/DeepSeek-R1-Distill-Qwen-14B $SLURM_TMPDIR/model
+echo "Setting up model path for direct access"
+# Use model directly from shared storage
+export MODEL_PATH="/project/def-yourgroup/deepseek-workspace/DeepSeek-R1-Distill-Qwen-14B"
+
+# Set cache directories BEFORE offline mode
+export HF_HOME="/scratch/$USER/.cache/huggingface"
+export TRANSFORMERS_CACHE="$HF_HOME/transformers"
 
 # Set variables to indicate offline mode, this is required as narval compute nodes are offline
 export HF_HUB_OFFLINE=1
@@ -134,7 +138,7 @@ nvidia-smi
 
 echo "Starting Inference"
 # Run your inference script (create this in the next step)
-python $SLURM_SUBMIT_DIR/my_inference_script.py
+python $SLURM_SUBMIT_DIR/inference_script.py
 
 echo "Job completed at $(date)"
 ```
@@ -156,8 +160,8 @@ import os
 from vllm import LLM, SamplingParams
 
 def main():
-    # Model will be located in SLURM_TMPDIR during job execution
-    model_path = os.path.join(os.environ['SLURM_TMPDIR'], 'model')
+    # Use model directly from shared storage (set via MODEL_PATH environment variable)
+    model_path = os.environ.get('MODEL_PATH', '/project/def-yourgroup/deepseek-workspace/DeepSeek-R1-Distill-Qwen-14B')
     
     print(f"Loading model from: {model_path}")
     
@@ -242,11 +246,15 @@ module load python/3.11 gcc/12.3 opencv/4.11
 
 virtualenv --no-download $SLURM_TMPDIR/deepseek_env
 source $SLURM_TMPDIR/deepseek_env/bin/activate
-pip install --no-index vllm fastapi uvicorn transformers
+pip install --no-index vllm>=0.10.0 fastapi uvicorn transformers
 
-# Copy model and set offline mode
-cp -r /project/def-yourgroup/deepseek-workspace/DeepSeek-R1-Distill-Qwen-14B $SLURM_TMPDIR/model
+# Use model directly from shared storage & set offline mode
+export MODEL_PATH="/project/def-yourgroup/deepseek-workspace/DeepSeek-R1-Distill-Qwen-14B"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+
+# Set cache directories for consistency
+export HF_HOME="/scratch/$USER/.cache/huggingface"
+export TRANSFORMERS_CACHE="$HF_HOME/transformers"
 
 # Display server connection information
 NODE_IP=$(hostname -I | awk '{print $1}')
@@ -256,7 +264,7 @@ echo "   API Documentation: http://$NODE_IP:8000/docs"
 echo "   Health Check: http://$NODE_IP:8000/health"
 
 # Start OpenAI-compatible API server
-vllm serve $SLURM_TMPDIR/model \
+vllm serve $MODEL_PATH \
     --tensor-parallel-size 2 \
     --host 0.0.0.0 \
     --port 8000 \
