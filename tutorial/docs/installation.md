@@ -104,7 +104,7 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $(hostname)"
 echo "Start time: $(date)"
 
-# Load Software Environment in Sequece
+# Load Software Environment in Sequence
 module load StdEnv/2023
 module load python/3.11 gcc/12.3 opencv/4.11
 
