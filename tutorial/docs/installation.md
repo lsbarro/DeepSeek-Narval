@@ -58,6 +58,9 @@ git lfs pull
 ```bash
 # Back in your workspace (/project/def-yourgroup/deepseek-workspace)
 
+# Load OpenCV module before creating virtual environment
+module load gcc/12.3 opencv/4.11
+
 # Create a virtual env
 virtualenv --no-download deepseek_env
 source deepseek_env/bin/activate
@@ -66,7 +69,6 @@ source deepseek_env/bin/activate
 pip install --no-index --upgrade pip
 pip install --no-index torch torchvision torchaudio
 pip install --no-index transformers safetensors tokenizers
-pip install --no-index vllm>=0.10.0 accelerate
 
 # Optional: Install additional packages for specific use cases
 pip install --no-index fastapi uvicorn  # For API servers
