@@ -3,12 +3,12 @@
   - [Phase 1. Initial Setup and Environment Preparation](#phase-1-initial-setup-and-environment-preparation)
     - [Step 1: Connect and Configure Environment](#step-1-connect-and-configure-environment)
     - [Step 2: Set Up Directory Structure](#step-2-set-up-directory-structure)
-    - [Step 3: Chose, and download a model:](#step-3-chose-and-download-a-model)
-    - [Step 4: Create Python Virtual Environment](#step-4-create-python-virtual-environment)
+    - [Step 3: Create Python Virtual Environment](#step-3-create-python-virtual-environment)
+    - [Step 4: Chose, and download a model:](#step-4-chose-and-download-a-model)
   - [Phase 2: Creating SLURM Job Scripts](#phase-2-creating-slurm-job-scripts)
     - [Step 5: Basic Inference Job Script](#step-5-basic-inference-job-script)
     - [Step 6: Create your inference script:](#step-6-create-your-inference-script)
-    - [Step 7: API Server Job Script (Optional)](#step-7-api-server-job-script-optional)
+    - [Step 7:](#step-7)
   - [Phase 3: Job Submission \& Management](#phase-3-job-submission--management)
     - [Step 8: Submit your job](#step-8-submit-your-job)
   - [Troubleshooting \& Optimization](#troubleshooting--optimization)
@@ -21,17 +21,52 @@
 # Clear any existing modules, and load standard environment
 module purge
 module load StdEnv/2023
+
+
+# Load python & Cuda
+module load python/3.11
+module load cuda/12.3
+
 ```
 ### Step 2: Set Up Directory Structure
 ```bash
 # In your project directory, create a workspace
-mkdir deepseek-workspace
-cd deepseek-workspace
+mkdir deepseek-project/{models,scripts,logs,cache}
+cd deepseek-project
 
-# Create a subdirectory for organization
-mkdir logs jobs
+
+# Also set the cache directory to avoid home quota overflow
+export HF_HOME"/scratch/$USER/.cache/huggingface"
+mkdr -p $HF_HOME
 ```
-### Step 3: Chose, and download a model:
+### Step 3: Create Python Virtual Environment
+*Setup a persistant virtual environment, with all the required packages*
+```bash
+
+# Create a virtual environment for vLLM
+cd ~/projects/def-yourgroup/deepseek-project
+
+# Use virtualenv
+virtualenv --no-download vllm-env
+source vllm-env/bin/activate
+
+# Your prompt should show (vllm-env), meaning you are in the isolated environment
+
+# Install packages from Alliance wheelhouse
+pip install --no-index --upgrade pip
+
+# Install packages for DeepSeek
+pip install --no-index torch torchvision torchaudio
+pip install --no-index vllm
+pip install --no-index accelerate safetensors
+pip install --no-index huggingface-hub # For downloading the models
+
+# Deactivate for normal terminal work
+deactivate
+
+```
+
+### Step 4: Chose, and download a model:
 | Model    | Repository      | Allocation Guidelines |
 | ------------- | ------------- | ------------- |
 | 1.5B Param, for smaller resource requirements | git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B | 1 GPU, 6 CPUs, 40GB RAM |
@@ -40,258 +75,173 @@ mkdir logs jobs
 |32B model, for larger capabilities | git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B| 4 GPUs, 24 CPUs, 160GB RAM |
 
 ```bash
-# Load Git LFS module for downloading large model files
-module load git-lfs/3.4.0
-git lfs install
+# Setup the cache directory: 
+export HF_HOME="/scratch/$USER/.cache/huggingface"
 
-# Clone the model repository (using 14B model as example)
-git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+# Download the model using HuggingFace CLI, around ~26GB total
+huggingface-cli download \
+    deepseek-ai/DeepSeek-R1-Distill-Qwen-14B \
+    --cache-dir $HF_HOME \
+    --resume-download
 
-# Enter the model directory, and download the actual model
-cd DeepSeek-R1-Distill-Qwen-14B
-git lfs pull
-```
-*Make sure to verify the size of your downloaded models, there should be four '.safetensors' files totaling ~26GB, not bytes.*
+# Create a link to the model:
+MODEL_DIR=$(find $HF_HOME -path "*/snapshots/*" -type d | head -1)
+ln -s "$MODEL_DIR" ~/projects/def-yourgroup/deepseek-project/mode
 
-### Step 4: Create Python Virtual Environment
-*Setup a persistant virtual environment, with all the required packages*
-```bash
-# Back in your workspace (/project/def-yourgroup/deepseek-workspace)
 
-# Load OpenCV module before creating virtual environment
-module load gcc/12.3 opencv/4.11
-
-# Create a virtual env
-virtualenv --no-download deepseek_env
-source deepseek_env/bin/activate
-
-# Install required packages from wheelhouse
-pip install --no-index --upgrade pip
-pip install --no-index torch torchvision torchaudio
-pip install --no-index transformers safetensors tokenizers
-
-# Optional: Install additional packages for specific use cases
-pip install --no-index fastapi uvicorn  # For API servers
-pip install --no-index datasets trl     # For fine-tuning workflows
-
-# Deactivate for now
-deactivate
+# Take a look to make sure they downloaded
+ls -la ~/projects/def-yourgroup/deepseek-project/model/
 ```
 
 ## Phase 2: Creating SLURM Job Scripts
 ### Step 5: Basic Inference Job Script
 *Create a job script for running inference with your model*
+
+*In your scripts folder*
 ```bash
-# In your jobs directory (/project/def-yourgroup/deepseek-workspace/jobs)
+cd ~/projects/def-yourgroup/deepseek-project/scripts
+```
+
+```bash
 nano deepseek_inference.sh
 ```
-*Write contets `deepseek_inference.sh`:*
+
 ```bash
 #!/bin/bash
-#SBATCH --job-name=deepseek-inference
-#SBATCH --account=def-yourgroup          # Use your account
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=a100:2             # Request appropriate # of GPU's, 2 for 14B model
-#SBATCH --cpus-per-task=12               # Request appropriate # of CPU's, 12 for 14B model
-#SBATCH --mem=80G                        # Adjust based on model size
-#SBATCH --time=3:00:00                   # Adjust based on your needs
-#SBATCH --output=../logs/inference_%j.out
-#SBATCH --error=../logs/inference_%j.err
+#SBATCH --job-name=deepseek-14b
+#SBATCH --account=def-yourgroup           # Update this to your account
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task=24
+#SBATCH --mem=128G
+#SBATCH --time=06:00:00
+#SBATCH --export=ALL,DISABLE_DCGM=1       # Required for Narval
+#SBATCH --output=%x-%j.out
+#SBATCH --error=%x-%j.err
 
-echo "DeepSeek Inference Started"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Node: $(hostname)"
-echo "Start time: $(date)"
+# Load environment
+module load StdEnv/2023 python/3.11 cuda/12.2
+source /project/def-yourgroup/deepseek-project/vllm-env/bin/activate
 
-# Load Software Environment in Sequence
-module load StdEnv/2023
-module load python/3.11 gcc/12.3 opencv/4.11
-
-echo "Setting up job-specific environment"
-# Create job-specific venv in a temporary directory
-virtualenv --no-download $SLURM_TMPDIR/deepseek_env
-source $SLURM_TMPDIR/deepseek_env/bin/activate
-
-# Install required packages in the job environment
-pip install --no-index --upgrade pip
-pip install --no-index torch vllm>=0.10.0 transformers safetensors
-
-echo "Setting up model path for direct access"
-# Use model directly from shared storage
-export MODEL_PATH="/project/def-yourgroup/deepseek-workspace/DeepSeek-R1-Distill-Qwen-14B"
-
-# Set cache directories BEFORE offline mode
-export HF_HOME="/scratch/$USER/.cache/huggingface"
-export TRANSFORMERS_CACHE="$HF_HOME/transformers"
-
-# Set variables to indicate offline mode, this is required as narval compute nodes are offline
+# Set offline mode
 export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export HF_HOME="/scratch/$USER/.cache/huggingface"
 
-# GPU optimization settings
-export CUDA_VISIBLE_DEVICES=0,1
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+# Copy model to local storage for faster loading
+cp -r /project/def-yourgroup/deepseek-project/model $SLURM_TMPDIR/deepseek-model
 
-echo "GPU Info:"
-nvidia-smi
-
-echo "Starting Inference"
-# Run your inference script (create this in the next step)
-python $SLURM_SUBMIT_DIR/inference_script.py
-
-echo "Job completed at $(date)"
+# Run inference
+python inference_vllm.py --model_path $SLURM_TMPDIR/deepseek-model
 ```
+
+*Make the script executable*
+```bash
+chmod +x deepseek_inference.sh
+```
+*Remember to update --account=def-yourgroup with your actual account name*
+
 
 ### Step 6: Create your inference script:
 *Create a python script that will run your specific tasks:*
+
+*In your scripts directory*
 ```bash
-#in your jobs directory (/project/def-yourgroup/deepseek-workspace/jobs)
-nano inference_script.py
+cd ~/projects/def-yourgroup/deepseek-project/scripts
 ```
-*Write contents of `inference_script.py`:*
-```python
+
+```bash
+nano inference_vllm.py
+```
+
+```bash
 #!/usr/bin/env python3
 """
-Deepseek Inference Script, modify for usecase
+DeepSeek-R1-Distill-Qwen-14B Inference using vLLM
+Framework script for running DeepSeek models on Narval
 """
 
-import os
+import argparse
+import time
 from vllm import LLM, SamplingParams
 
-def main():
-    # Use model directly from shared storage (set via MODEL_PATH environment variable)
-    model_path = os.environ.get('MODEL_PATH', '/project/def-yourgroup/deepseek-workspace/DeepSeek-R1-Distill-Qwen-14B')
-    
+def load_model(model_path):
+    """Load DeepSeek model with vLLM"""
     print(f"Loading model from: {model_path}")
     
-    # Initialize vLLM with configuration optimized for your model
     llm = LLM(
         model=model_path,
-        tensor_parallel_size=2,           # Match the number of GPUs in your job
-        gpu_memory_utilization=0.85,      # Use 85% of GPU memory
-        max_model_len=32768,              # Full context length for DeepSeek models
-        trust_remote_code=True,           # Required for DeepSeek models
-        load_format='safetensors',        # Explicit format specification
-        dtype='half'                      # Use FP16 for memory efficiency
+        tensor_parallel_size=2,      # Use both GPUs  
+        gpu_memory_utilization=0.85,
+        max_model_len=8192,         # Adjust based on your needs
+        dtype="bfloat16",
+        trust_remote_code=True,
+        enforce_eager=True
     )
     
-    print("Model loaded!")
-    
-    # Configure sampling parameters for your use case
+    print("Model loaded successfully")
+    return llm
+
+def run_inference(llm, prompts):
+    """Run inference on provided prompts"""
     sampling_params = SamplingParams(
-        temperature=0.7,                  # Adjust for creativity vs consistency
-        top_p=0.95,                       # Nucleus sampling parameter
-        max_tokens=1024,                  # Maximum response length
-        stop=["Human:", "Assistant:", "<|im_end|>"]  # Stop sequences
+        temperature=0.7,
+        top_p=0.9,
+        max_tokens=512,
+        stop=["Human:", "Assistant:"]
     )
-    
-    # Define your custom prompts or load from file
-    prompts = [
-        "Explain the concept of machine learning in simple terms.",
-        "Write a Python function to calculate the factorial of a number.",
-        "What are the main differences between supervised and unsupervised learning?",
-        # Add your own prompts here
-    ]
     
     print(f"Processing {len(prompts)} prompts...")
+    start_time = time.time()
     
-    # Generate responses
     outputs = llm.generate(prompts, sampling_params)
     
-    # Process and display results
-    for i, output in enumerate(outputs, 1):
-        print(f"\n{'='*60}")
-        print(f"PROMPT {i}")
-        print(f"{'='*60}")
-        print(f"Input: {output.prompt}")
-        print(f"\nResponse: {output.outputs[0].text}")
-        print(f"Finish reason: {output.outputs[0].finish_reason}")
-        
-        # Optional: Save results to file
-        # You can modify this section to save results in your preferred format
+    inference_time = time.time() - start_time
+    print(f"Inference completed in {inference_time:.2f} seconds")
     
-    print(f"\nCompleted processing all {len(prompts)} prompts")
+    return outputs
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model_path", required=True, help="Path to model directory")
+    args = parser.parse_args()
+    
+    # Load the model
+    llm = load_model(args.model_path)
+    
+    # Example prompts - modify these for your use case
+    prompts = [
+        "Explain machine learning in simple terms:",
+        "Write a Python function to calculate factorial:",
+        "What are the benefits of using HPC for AI research?"
+    ]
+    
+    # Run inference
+    outputs = run_inference(llm, prompts)
+    
+    # Display results
+    for i, output in enumerate(outputs):
+        print(f"\n--- Result {i+1} ---")
+        print(f"Prompt: {output.prompt}")
+        print(f"Response: {output.outputs[0].text}")
 
 if __name__ == "__main__":
     main()
+EOF
 ```
 
-### Step 7: API Server Job Script (Optional)
-*For interactive applications, you will need to create a server that provides an API interface:*
-```bash
-nano deepseek_server.sh
-```
-*Write contents of `deepseek_server.sh`, replacing necessary values as before*
-```bash
-#!/bin/bash
-#SBATCH --job-name=deepseek-server
-#SBATCH --account=def-yourgroup          # Replace with your account
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=a100:2
-#SBATCH --cpus-per-task=12               # Request appropriate # of CPU's, 12 for 14B model
-#SBATCH --mem=80G
-#SBATCH --time=8:00:00                   # Longer duration for server applications
-#SBATCH --output=../logs/server_%j.out
-#SBATCH --error=../logs/server_%j.err
 
-echo "DeepSeek API server setup"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Node: $(hostname)"
-
-# Set up env
-module load StdEnv/2023
-module load python/3.11 gcc/12.3 opencv/4.11
-
-virtualenv --no-download $SLURM_TMPDIR/deepseek_env
-source $SLURM_TMPDIR/deepseek_env/bin/activate
-pip install --no-index vllm>=0.10.0 fastapi uvicorn transformers
-
-# Use model directly from shared storage & set offline mode
-export MODEL_PATH="/project/def-yourgroup/deepseek-workspace/DeepSeek-R1-Distill-Qwen-14B"
-export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-
-# Set cache directories for consistency
-export HF_HOME="/scratch/$USER/.cache/huggingface"
-export TRANSFORMERS_CACHE="$HF_HOME/transformers"
-
-# Display server connection information
-NODE_IP=$(hostname -I | awk '{print $1}')
-echo "   Server Access Information:"
-echo "   Base URL: http://$NODE_IP:8000"
-echo "   API Documentation: http://$NODE_IP:8000/docs"
-echo "   Health Check: http://$NODE_IP:8000/health"
-
-# Start OpenAI-compatible API server
-vllm serve $MODEL_PATH \
-    --tensor-parallel-size 2 \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --max-model-len 32768 \
-    --gpu-memory-utilization 0.85 \
-    --trust-remote-code \
-    --load-format safetensors \
-    --dtype half
-
-echo "Server stopped at $(date)"
-```
-
+### Step 7: 
 ## Phase 3: Job Submission & Management
 ### Step 8: Submit your job
 *Make sure your scripts are properly configured*
-```bash
-# Make your job scripts executable
-chmod +x deepseek_inference.sh deepseek_server.sh
 
-# In your jobs dir (/project/def-yourgroup/deepseek-workspace/jobs) submit your inference job
-sbatch deepseek_inference.sh
+*In your scripts dir:*
+`cd ~/projects/def-yourgroup/deepseek-project/scripts`
 
-# Check job status
-squeue -u $USER
-```
+*Submit:*
+`sbatch deepseek_inference.sh`
+
+*Check job status:*
+`squeue -u $USER`
 
 ## Troubleshooting & Optimization
 ### Common Issues and Solutions
