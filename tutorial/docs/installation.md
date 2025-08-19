@@ -1,192 +1,261 @@
 # Running DeepSeek Models on Alliance Canada's Narval Cluster
-- [Running DeepSeek Models on Alliance Canada's Narval Cluster](#running-deepseek-models-on-alliance-canadas-narval-cluster)
-  - [Phase 1. Initial Setup and Environment Preparation](#phase-1-initial-setup-and-environment-preparation)
-    - [Step 1: Connect and Configure Environment](#step-1-connect-and-configure-environment)
-    - [Step 2: Set Up Directory Structure](#step-2-set-up-directory-structure)
-    - [Step 3: Create Python Virtual Environment](#step-3-create-python-virtual-environment)
-    - [Step 4: Chose, and download a model:](#step-4-chose-and-download-a-model)
-  - [Phase 2: Creating SLURM Job Scripts](#phase-2-creating-slurm-job-scripts)
-    - [Step 5: Basic Inference Job Script](#step-5-basic-inference-job-script)
-    - [Step 6: Create your inference script:](#step-6-create-your-inference-script)
-    - [Step 7:](#step-7)
-  - [Phase 3: Job Submission \& Management](#phase-3-job-submission--management)
-    - [Step 8: Submit your job](#step-8-submit-your-job)
-  - [Troubleshooting \& Optimization](#troubleshooting--optimization)
-    - [Common Issues and Solutions](#common-issues-and-solutions)
 
-## Phase 1. Initial Setup and Environment Preparation
-### Step 1: Connect and Configure Environment
-*On Narval:*
+- [Running DeepSeek Models on Alliance Canada's Narval Cluster](#running-deepseek-models-on-alliance-canadas-narval-cluster)
+  - [Phase 1: Initial Setup and Environment Preparation](#phase-1-initial-setup-and-environment-preparation)
+    - [Step 1: Setup environment](#step-1-setup-environment)
+    - [Step 2: Set up Your Working Directory](#step-2-set-up-your-working-directory)
+    - [Step 3: Create Python Virtual Environment](#step-3-create-python-virtual-environment)
+    - [Step 4: Download DeepSeek Model](#step-4-download-deepseek-model)
+  - [Phase 2: Create SLURM Job Scripts](#phase-2-create-slurm-job-scripts)
+    - [Step 5: Main Job Script](#step-5-main-job-script)
+    - [Step 6: Python Inference Script](#step-6-python-inference-script)
+  - [Phase 3: Job Submission and Management](#phase-3-job-submission-and-management)
+    - [Step 7: Submit and Monitor Job](#step-7-submit-and-monitor-job)
+  - [Troubleshooting Guide](#troubleshooting-guide)
+    - [Common Issues and Verified Solutions](#common-issues-and-verified-solutions)
+    - [Performance Expectations](#performance-expectations)
+
+
+## Phase 1: Initial Setup and Environment Preparation
+
+### Step 1: Setup environment
+
+**Load modules in this order**
 ```bash
-# Clear any existing modules, and load standard environment
+# Always start clean
 module purge
+
+# Load standard environment
 module load StdEnv/2023
 
-
-# Load python & Cuda
-module load python/3.11
-module load cuda/12.3
-
+# Load dependencies in this order
+module load opencv/4.11 python/3.12
+module load cuda/12.2
 ```
-### Step 2: Set Up Directory Structure
+
+### Step 2: Set up Your Working Directory
+
+**Set up your workspace (REPLACE def-yourgroup with actual group name):**
 ```bash
-# In your project directory, create a workspace
-mkdir deepseek-project/{models,scripts,logs,cache}
+# In your project directory
+cd ~/projects/def-yourgroup
+
+# Create organized directory structure
+mkdir -p deepseek-project/{models,scripts,logs,cache}
 cd deepseek-project
 
-
-# Also set the cache directory to avoid home quota overflow
-export HF_HOME"/scratch/$USER/.cache/huggingface"
-mkdr -p $HF_HOME
-```
-### Step 3: Create Python Virtual Environment
-*Setup a persistant virtual environment, with all the required packages*
-```bash
-
-# Create a virtual environment for vLLM
-cd ~/projects/def-yourgroup/deepseek-project
-
-# Use virtualenv
-virtualenv --no-download vllm-env
-source vllm-env/bin/activate
-
-# Your prompt should show (vllm-env), meaning you are in the isolated environment
-
-# Install packages from Alliance wheelhouse
-pip install --no-index --upgrade pip
-
-# Install packages for DeepSeek
-pip install --no-index torch torchvision torchaudio
-pip install --no-index vllm
-pip install --no-index accelerate safetensors
-pip install --no-index huggingface-hub # For downloading the models
-
-# Deactivate for normal terminal work
-deactivate
-
-```
-
-### Step 4: Chose, and download a model:
-| Model    | Repository      | Allocation Guidelines |
-| ------------- | ------------- | ------------- |
-| 1.5B Param, for smaller resource requirements | git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B | 1 GPU, 6 CPUs, 40GB RAM |
-| 14B model (balanced capability and resources) | git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B| 2 GPUs, 12 CPUs, 80GB RAM |
-| Instruct, for coding tasks | git clone https://huggingface.co/deepseek-ai/DeepSeek-Coder-V2-Instruct |  |
-|32B model, for larger capabilities | git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B| 4 GPUs, 24 CPUs, 160GB RAM |
-
-```bash
-# Setup the cache directory: 
+# Configure HuggingFace cache in scratch space (for large models)
 export HF_HOME="/scratch/$USER/.cache/huggingface"
+mkdir -p $HF_HOME
 
-# Download the model using HuggingFace CLI, around ~26GB total
+# Orient yourself
+pwd
+ls -la
+```
+
+### Step 3: Create Python Virtual Environment
+
+```bash
+# Create virtual environment in current project directory
+virtualenv --no-download ./vllm-env
+
+# Activate the environment
+source ./vllm-env/bin/activate
+
+# The prompt should show (vllm-env) at this point
+```
+
+**Install required packages using Alliance wheels:**
+```bash
+# Install in order
+pip install --no-index --upgrade pip
+pip install --no-index huggingface_hub
+pip install --no-index vllm
+pip install --no-index accelerate safetensors transformers
+
+
+pip install --no-index pillow
+pip install --no-index opencv-python-headless
+pip install --no-index pyzmq
+pip install --no-index scipy
+pip install --no-index six
+
+```
+
+### Step 4: Download DeepSeek Model
+
+**Download model on login node:**
+```bash
+# Ensure virtual environment is active
+source ./vllm-env/bin/activate
+
+# Download DeepSeek-R1-Distill-Qwen-14B (~26GB)
 huggingface-cli download \
     deepseek-ai/DeepSeek-R1-Distill-Qwen-14B \
     --cache-dir $HF_HOME \
     --resume-download
 
-# Create a link to the model:
-MODEL_DIR=$(find $HF_HOME -path "*/snapshots/*" -type d | head -1)
-ln -s "$MODEL_DIR" ~/projects/def-yourgroup/deepseek-project/mode
-
-
-# Take a look to make sure they downloaded
-ls -la ~/projects/def-yourgroup/deepseek-project/model/
+# SafeTensors files should be several GB each, NOT just bytes
+# If files show only ~135 bytes, Git LFS didn't download properly
 ```
 
-## Phase 2: Creating SLURM Job Scripts
-### Step 5: Basic Inference Job Script
-*Create a job script for running inference with your model*
+## Phase 2: Create SLURM Job Scripts
 
-*In your scripts folder*
-```bash
-cd ~/projects/def-yourgroup/deepseek-project/scripts
-```
+### Step 5: Main Job Script
 
+**Create the job submission script:**
 ```bash
+cd scripts
 nano deepseek_inference.sh
 ```
 
+**SLURM script:**
 ```bash
 #!/bin/bash
 #SBATCH --job-name=deepseek-14b
-#SBATCH --account=def-yourgroup           # Update this to your account
-#SBATCH --gres=gpu:2
-#SBATCH --cpus-per-task=24
-#SBATCH --mem=128G
+#SBATCH --account=def-yourgroup               # REPLACE with your actual group
+#SBATCH --gpus-per-task=2                     
+#SBATCH --cpus-per-task=12                    # Max 12 CPUs per GPU on Narval
+#SBATCH --mem=248G                            # 124GB per GPU × 2 GPUs
 #SBATCH --time=06:00:00
-#SBATCH --export=ALL,DISABLE_DCGM=1       # Required for Narval
+#SBATCH --export=ALL,DISABLE_DCGM=1          
 #SBATCH --output=%x-%j.out
 #SBATCH --error=%x-%j.err
 
-# Load environment
-module load StdEnv/2023 python/3.11 cuda/12.2
-source /project/def-yourgroup/deepseek-project/vllm-env/bin/activate
+echo "Job started at: $(date)"
+echo "Running on node: $(hostname)"
+echo "SLURM Job ID: $SLURM_JOB_ID"
 
-# Set offline mode
+# Load environment in order
+module purge
+module load StdEnv/2023
+module load opencv/4.11 python/3.12
+module load cuda/12
+
+# Set offline mode for compute nodes
 export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 export HF_HOME="/scratch/$USER/.cache/huggingface"
 
-# Copy model to local storage for faster loading
-cp -r /project/def-yourgroup/deepseek-project/model $SLURM_TMPDIR/deepseek-model
+# Get absolute path to project directory
+PROJECT_DIR="$(cd ~/projects/def-yourgroup/deepseek-project && pwd)"
+echo "Project directory: $PROJECT_DIR"
+
+# Activate virtual environment
+source "$PROJECT_DIR/vllm-env/bin/activate"
+
+# REQUIRED: Wait for DCGM to be disabled on Narval
+echo "Waiting for DCGM to be disabled..."
+while [ ! -z "$(dcgmi -v 2>/dev/null | grep 'Hostengine build info:')" ]; do 
+    echo "  Still waiting for DCGM..."
+    sleep 5
+done
+echo "DCGM disabled"
+
+# Copy model to node-attached storage for faster performance, scratch has slow I/O request speed, and copying then accessing is many times faster.
+echo "Copying model to local storage..."
+MODEL_CACHE_DIR="$HF_HOME/models--deepseek-ai--DeepSeek-R1-Distill-Qwen-14B"
+if [ -d "$MODEL_CACHE_DIR" ]; then
+    cp -r "$MODEL_CACHE_DIR" "$SLURM_TMPDIR/"
+    MODEL_PATH="$SLURM_TMPDIR/models--deepseek-ai--DeepSeek-R1-Distill-Qwen-14B"
+    echo "Model copied to: $MODEL_PATH"
+else
+    echo "ERROR: Model not found at $MODEL_CACHE_DIR"
+    exit 1
+fi
 
 # Run inference
-python inference_vllm.py --model_path $SLURM_TMPDIR/deepseek-model
+echo "Starting DeepSeek inference..."
+python "$PROJECT_DIR/scripts/inference_vllm.py" --model_path "$MODEL_PATH"
+
+echo "Job completed at: $(date)"
 ```
 
-*Make the script executable*
+**Make script executable:**
 ```bash
 chmod +x deepseek_inference.sh
 ```
-*Remember to update --account=def-yourgroup with your actual account name*
 
+### Step 6: Python Inference Script
 
-### Step 6: Create your inference script:
-*Create a python script that will run your specific tasks:*
-
-*In your scripts directory*
-```bash
-cd ~/projects/def-yourgroup/deepseek-project/scripts
-```
-
+**Create the robust inference script:**
 ```bash
 nano inference_vllm.py
 ```
 
-```bash
+```python
 #!/usr/bin/env python3
 """
 DeepSeek-R1-Distill-Qwen-14B Inference using vLLM
-Framework script for running DeepSeek models on Narval
 """
 
 import argparse
 import time
-from vllm import LLM, SamplingParams
+import os
+import sys
+from pathlib import Path
+
+try:
+    from vllm import LLM, SamplingParams
+except ImportError:
+    print("ERROR: vLLM not installed")
+    sys.exit(1)
+
+def find_model_directory(model_path):
+    """
+    Find the actual model directory, handling various download structures.
+    """
+    model_path = Path(model_path)
+    
+    # Direct model path (already contains model files)
+    if (model_path / "config.json").exists():
+        return str(model_path)
+    
+    # HuggingFace cache structure with snapshots
+    snapshots_dir = model_path / "snapshots"
+    if snapshots_dir.exists():
+        snapshot_dirs = [d for d in snapshots_dir.iterdir() if d.is_dir()]
+        if snapshot_dirs:
+            # Use the first (usually only) snapshot
+            actual_path = snapshot_dirs[0]
+            if (actual_path / "config.json").exists():
+                return str(actual_path)
+    
+    raise ValueError(
+        f"Could not find valid model directory in {model_path}. "
+        f"Expected either config.json directly or in snapshots subdirectory."
+    )
 
 def load_model(model_path):
-    """Load DeepSeek model with vLLM"""
+    """Load DeepSeek model with vLLMs"""
     print(f"Loading model from: {model_path}")
     
+    actual_model_path = find_model_directory(model_path)
+    print(f"Using model files from: {actual_model_path}")
+    
+    # vLLM configuration optimized for Narval A100 GPUs
     llm = LLM(
-        model=model_path,
-        tensor_parallel_size=2,      # Use both GPUs  
-        gpu_memory_utilization=0.85,
-        max_model_len=8192,         # Adjust based on your needs
-        dtype="bfloat16",
-        trust_remote_code=True,
-        enforce_eager=True
+        model=actual_model_path,
+        tensor_parallel_size=2,          # Use both allocated GPUs
+        gpu_memory_utilization=0.9,      # Use 90% of GPU memory
+        max_model_len=4096,              # Context length
+        dtype="bfloat16",                # Efficient precision for A100
+        trust_remote_code=True,          # Required for DeepSeek
+        enforce_eager=True,              # Better compatibility on HPC
+        disable_log_stats=True           # Reduce log verbosity
     )
     
     print("Model loaded successfully")
     return llm
 
 def run_inference(llm, prompts):
-    """Run inference on provided prompts"""
+    """Run inference with DeepSeek-optimized parameters"""
+    # DeepSeek-specific optimal parameters from research
     sampling_params = SamplingParams(
-        temperature=0.7,
-        top_p=0.9,
+        temperature=0.6,                 # Optimal for DeepSeek reasoning
+        top_p=0.95,                     # Optimal for DeepSeek quality
         max_tokens=512,
-        stop=["Human:", "Assistant:"]
+        stop=["<|User|>", "<|Assistant|>", "\n\nUser:", "\n\nAssistant:"]
     )
     
     print(f"Processing {len(prompts)} prompts...")
@@ -195,105 +264,140 @@ def run_inference(llm, prompts):
     outputs = llm.generate(prompts, sampling_params)
     
     inference_time = time.time() - start_time
+    tokens_per_second = sum(len(output.outputs[0].text.split()) for output in outputs) / inference_time
     print(f"Inference completed in {inference_time:.2f} seconds")
+    print(f"Throughput: {tokens_per_second:.1f} tokens/second")
     
     return outputs
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="DeepSeek inference on Alliance Narval")
     parser.add_argument("--model_path", required=True, help="Path to model directory")
+    parser.add_argument("--prompts_file", help="File containing prompts (one per line)")
     args = parser.parse_args()
     
     # Load the model
-    llm = load_model(args.model_path)
+    try:
+        llm = load_model(args.model_path)
+    except Exception as e:
+        print(f"ERROR loading model: {e}")
+        return 1
     
-    # Example prompts - modify these for your use case
-    prompts = [
-        "Explain machine learning in simple terms:",
-        "Write a Python function to calculate factorial:",
-        "What are the benefits of using HPC for AI research?"
-    ]
+    # Get prompts
+    if args.prompts_file and os.path.exists(args.prompts_file):
+        with open(args.prompts_file, 'r') as f:
+            prompts = [line.strip() for line in f if line.strip()]
+    else:
+        # Default test prompts with proper DeepSeek formatting
+        prompts = [
+            "<|User|>Explain machine learning in simple terms:<|Assistant|>",
+            "<|User|>Write a Python function to calculate factorial:<|Assistant|>",
+            "<|User|>What are the benefits of using HPC for AI research?<|Assistant|>"
+        ]
     
     # Run inference
-    outputs = run_inference(llm, prompts)
+    try:
+        outputs = run_inference(llm, prompts)
+    except Exception as e:
+        print(f"ERROR during inference: {e}")
+        return 1
     
     # Display results
+    print("\n" + "="*60)
+    print("INFERENCE RESULTS")
+    print("="*60)
+    
     for i, output in enumerate(outputs):
         print(f"\n--- Result {i+1} ---")
         print(f"Prompt: {output.prompt}")
         print(f"Response: {output.outputs[0].text}")
+        print("-" * 50)
+    
+    print(f"\nSuccessfully processed {len(outputs)} prompts")
+    return 0
 
 if __name__ == "__main__":
-    main()
-EOF
+    sys.exit(main())
 ```
 
+## Phase 3: Job Submission and Management
 
-### Step 7: 
-## Phase 3: Job Submission & Management
-### Step 8: Submit your job
-*Make sure your scripts are properly configured*
+### Step 7: Submit and Monitor Job
 
-*In your scripts dir:*
-`cd ~/projects/def-yourgroup/deepseek-project/scripts`
+**Submit the job:**
+```bash
+cd scripts
+sbatch deepseek_inference.sh
+```
 
-*Submit:*
-`sbatch deepseek_inference.sh`
+**Monitor job progress:**
+```bash
+# Check job status
+squeue -u $USER
 
-*Check job status:*
-`squeue -u $USER`
+# Follow output in real-time (replace JOBID with actual ID)
+tail -f deepseek-14b-JOBID.out
 
-## Troubleshooting & Optimization
-### Common Issues and Solutions
-1. Module Loading Errors
-   ```bash
-    # Always start with a clean environment
-    module purge
-    module load StdEnv/2023  # Load this first
-    module load python/3.11 gcc/12.3 opencv/4.11
-    ```
-2. Model Loading Issues\
-    *Verify model files are complete, '.safetensors' files should be GB, not bytes*
-    ```bash
-    # If files are incomplete, re-download
-    git lfs fetch -all
-    git reset --hard HEAD
-    git lfs pull
-    ```
-3. GPU Memory Issues\
-    *Reduce the memory usage percentage in your python script*
-    ```bash
-    llm = LLM(
-        model=model_path,
-        gpu_memory_utilization=0.75,  # Reduce from 0.85
-        max_model_len=16384,          # Reduce context length if acceptable
-        tensor_parallel_size=2
-    )
-    ```
-4. Job Timeout Issues:
+# Check for errors
+tail -f deepseek-14b-JOBID.err
+```
 
-    *For longer jobs, increase time limit and use checkpointing*\
-    `#SBATCH --time=12:00:00`
+## Troubleshooting Guide
 
+### Common Issues and Verified Solutions
 
-    
+**1. Module Loading Failures**
+```bash
+# Symptom: "Module not found" errors
+# Solution: Verify correct order and availability
+module avail python
+module avail opencv
+# Always load: opencv/4.11 python/3.12 (in that order)
+```
 
+**2. Account Name Errors**
+```bash
+# Symptom: "Invalid account" in SLURM
+# Solution: Find your exact account name
+sacctmgr show user $USER -s | grep def-
+# Use the exact string shown (e.g., def-smithj, not def-smith)
+```
 
+**3. Virtual Environment Issues**
+```bash
+# Symptom: Package import errors
+# Solution: Recreate environment
+rm -rf ./vllm-env
+module load opencv/4.11 python/3.12
+virtualenv --no-download ./vllm-env
+source ./vllm-env/bin/activate
+pip install --no-index --upgrade pip
+pip install --no-index vllm huggingface_hub
+```
 
+**4. Model Loading Failures**
+```bash
+# Symptom: "No such file or directory" for model
+# Solution: Verify Git LFS completion
+find $HF_HOME -name "*.safetensors" -size -1M
+# If any files are tiny, re-download:
+cd $(find $HF_HOME -name "*.git" -type d | head -1 | xargs dirname)
+git lfs pull
+```
 
+**5. GPU Allocation Issues**
+```bash
+# Symptom: Job doesn't start or GPU errors
+# Solution: Check resource availability
+sinfo -p gpu
+# Verify DCGM disable worked:
+dcgmi -v 2>/dev/null || echo "DCGM properly disabled"
+```
 
+### Performance Expectations
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+**On Narval with 2×A100 GPUs, expect:**
+- Model loading: 2-5 minutes
+- Inference speed: 50-100 tokens/second
+- Memory usage: ~80% of 40GB per GPU
+- Total job time: 10-15 minutes for test prompts
