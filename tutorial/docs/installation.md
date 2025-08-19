@@ -103,7 +103,7 @@ huggingface-cli download \
 
 ### Step 5: Main Job Script
 
-**Create the job submission script:**
+**Create the job submission script (make sure to fill your group into the project directory path in this script):**
 ```bash
 cd scripts
 nano deepseek_inference.sh
@@ -181,7 +181,7 @@ chmod +x deepseek_inference.sh
 
 ### Step 6: Python Inference Script
 
-**Create the robust inference script:**
+**Create the inference script:**
 ```bash
 nano inference_vllm.py
 ```
