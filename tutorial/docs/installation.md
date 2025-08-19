@@ -144,13 +144,16 @@ echo "Project directory: $PROJECT_DIR"
 # Activate virtual environment
 source "$PROJECT_DIR/vllm-env/bin/activate"
 
-# REQUIRED: Wait for DCGM to be disabled on Narval
-echo "Waiting for DCGM to be disabled..."
-while [ ! -z "$(dcgmi -v 2>/dev/null | grep 'Hostengine build info:')" ]; do 
-    echo "  Still waiting for DCGM..."
-    sleep 5
-done
-echo "DCGM disabled"
+# Simple GPU verification instead of DCGM check
+echo "Verifying GPU accessibility..."
+nvidia-smi > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "GPUs accessible - proceeding"
+    nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+else
+    echo "ERROR: Cannot access GPUs - check SLURM allocation"
+    exit 1
+fi
 
 # Copy model to node-attached storage for faster performance, scratch has slow I/O request speed, and copying then accessing is many times faster.
 echo "Copying model to local storage..."
